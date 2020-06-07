@@ -22,6 +22,7 @@ TEST_ERROR = os.path.join(os.path.dirname(__file__), '_test_error.ipynb')
 TEST_FAIL = os.path.join(os.path.dirname(__file__), '_test_fail.ipynb')
 COUNTING = os.path.join(os.path.dirname(__file__), '_cell_counting.ipynb')
 NONCODE = os.path.join(os.path.dirname(__file__), '_non_code_cell.ipynb')
+EMPTY_CELL_WITH_TEST = os.path.join(os.path.dirname(__file__), '_empty_cell_with_test.ipynb')
 SKIPS = os.path.join(os.path.dirname(__file__), '_skips.ipynb')
 COVERAGE = os.path.join(os.path.dirname(__file__), '_cell_coverage.ipynb')
 
@@ -36,18 +37,18 @@ INPUT_TEST_INJECTION_COMMENT = os.path.join(os.path.dirname(__file__), '_input_t
 FORKED = '--forked' in sys.argv
 
 
-def _assert_x_undefined(t):
+def _assert_undefined(t,name='x'):
     """
     Convenience method to assert that x is not already defined in the kernel.
     """
     t._run("""
     try:
-        x
+        %s
     except NameError:
         pass
     else:
-        raise Exception('x was already defined')
-    """)
+        raise Exception('%s was already defined')
+    """%(name,name))
 
 # TODO: This test file's manual use of unittest is brittle
 
@@ -106,6 +107,15 @@ class _TestCellTests(unittest.TestCase):
         else:
             raise ValueError("Should have skipped with reason '%s'" % reason)
 
+    def _assert_not_skipped(self, mthd):
+        try:
+            mthd()
+        except unittest.case.SkipTest as e:
+            raise ValueError("Should not have skipped (skip reason=%s)" % e.args[0])
+        else:
+            pass
+            
+        
     def test_coverage(self):
         """
         Subclasses should override this if they want to check coverage.
@@ -116,8 +126,6 @@ class _TestCellTests(unittest.TestCase):
 class TestMethodGenerationError(_TestCellTests):
     """Tests of things that should fail during test script generation"""
 
-    NBNAME = NONCODE
-
     @classmethod
     def setUpClass(cls):
         # we're testing what happens in setUpClass
@@ -125,12 +133,21 @@ class TestMethodGenerationError(_TestCellTests):
 
     def test_non_code_cell_with_test_causes_error(self):
         try:
-            _generate_test_module(self.NBNAME, "module.name.irrelevant")
+            _generate_test_module(NONCODE, "module.name.irrelevant")
         except ValueError as e:
             assert e.args[0] == 'Cell 1 is not a code cell, but metadata contains test code!'
         else:
             raise Exception("Test script should fail to generate")
 
+    def test_non_code_cell_with_test_causes_error(self):
+        try:
+            _generate_test_module(EMPTY_CELL_WITH_TEST, "module.name.irrelevant")
+        except ValueError as e:
+            assert e.args[0] == 'Code cell 2 is empty, but test contains code.'
+        else:
+            raise Exception("Test script should fail to generate")
+
+    
 
 class TestSkips(_TestCellTests):
     """Tests that various conditions result in skipped tests"""
@@ -151,29 +168,45 @@ class TestSkips(_TestCellTests):
         self.t.tearDownClass()
 
     def test_skip_completely_empty_code_cell(self):
-        """Test+cell where cell has nothing at all in should be skipped"""
+        """Test where cell has nothing at all in should be skipped"""
         self._assert_skipped(self.t.test_code_cell_1, "empty code cell")
 
     def test_skip_no_code_code_cell(self):
-        """Test+cell where cell had e.g. just a comment in should be skipped"""
+        """Test where cell had e.g. just a comment in should be skipped"""
         self._assert_skipped(self.t.test_code_cell_2, "empty code cell")
 
     def test_skip_no_test_field_in_metadata(self):
-        """Cell with no test metadata should be skipped"""
+        """Test where cell has no test metadata should be skipped"""
         self._assert_skipped(self.t.test_code_cell_3, "no test supplied")
 
     def test_skip_no_code_in_test(self):
-        """Test+cell where test is just e.g. a comment should be skipped"""
+        """Test where test is just e.g. a comment should be skipped"""
         self._assert_skipped(self.t.test_code_cell_4, "no test supplied")
 
     def test_skip_completely_empty_test(self):
-        """Cell where test is completely empty should be skipped"""
+        """Test where test is completely empty should be skipped"""
         self._assert_skipped(self.t.test_code_cell_5, "no test supplied")
 
-    def test_skip_if_no_cell_injection(self):
-        """Test+cell where test does not inject cell should be skipped"""
-        self._assert_skipped(self.t.test_code_cell_6, "cell code not injected into test")
+    def test_noskip_with_no_cell_injection(self):
+        """Test where test does not inject cell should NOT be skipped (if cell has code)"""
+        # but we might indicate it somehow
+        self._assert_not_skipped(self.t.test_code_cell_6)
+        self.t._run("assert x == 2, x") # value from test, not cell
 
+
+# TODO:
+#  - decide if skip means "is this cell tested" or "did this 'celltest' run"?
+
+# TODO:
+# failures of
+#FAILED nbcelltests/tests/test_test.py::test_basic_runWithReturn_pass - subprocess.CalledProcessError: Command '['C:\\Users\\sefkw\\Miniconda3\\envs\\nbctdev\\python.exe', '-m', 'pytest', '-v', 'C:\\Users\\sefkw\\code\\ceball\\nbcellte...
+#FAILED nbcelltests/tests/test_test.py::test_basic_runWithHTMLReturn_pass - assert False
+#FAILED nbcelltests/tests/test_test.py::test_basic_runWithHTMLReturn_fail - assert False
+
+# TODO: issue - "most usages of celltests should not generate a test
+# script" instead be a standalone plugin (how will it work from jlab?
+# Are there other nb test tools that run from jlab ui - all the jlab
+# frontend and stuff should be compatible with nbval etc?)
 
 class TestCumulativeRun(_TestCellTests):
     """Tests that state in notebook is built up correctly."""
@@ -208,16 +241,17 @@ class TestCumulativeRun(_TestCellTests):
         # this is one long method rather individual ones because of
         # building up state
 
+        #import pdb;pdb.set_trace()
         t = self.generated_tests.TestNotebook()
         t.setUpClass()
 
         # check cell did not run
-        # (no %cell in test)
+        # (no cell in test, no code in test)
         t.setUp()
-        _assert_x_undefined(t)
-        self._assert_skipped(t.test_code_cell_1, "cell code not injected into test")
+        _assert_undefined(t)
+        self._assert_skipped(t.test_code_cell_1, "no test supplied")
         # t.test_code_cell_1()
-        # _assert_x_undefined(t)
+        _assert_undefined(t)
         t.tearDown()
         if FORKED:
             t.tearDownClass()
@@ -268,7 +302,44 @@ class TestCumulativeRun(_TestCellTests):
         assert x == 3, x
         """)
         t.tearDown()
+        if FORKED:
+            t.tearDownClass()
 
+        # no test but runs as "backfill" (will be checked in cell 8)
+        # i.e. y will be defined by cell 8
+        if FORKED:
+            t.setUpClass()
+        t.setUp()
+        #t.test_code_cell_6()
+        self._assert_skipped(t.test_code_cell_6, "no test supplied")
+        _assert_undefined(t,'y')
+        t.tearDown()
+        if FORKED:
+            t.tearDownClass()
+
+        # test with a comment; cell will never run (will be checked in cell 8)
+        # i.e. a will never be defined
+        if FORKED:
+            t.setUpClass()
+        t.setUp()
+        #t.test_code_cell_7()
+        self._assert_skipped(t.test_code_cell_7, "no test supplied")
+        _assert_undefined(t,'a')
+        t.tearDown()
+        if FORKED:
+            t.tearDownClass()
+            
+        if FORKED:
+            t.setUpClass()
+        t.setUp()
+        t.test_code_cell_8()
+        t._run("""
+        assert z == 1, x
+        assert y == 10, y
+        """)
+        _assert_undefined(t,'a')
+        t.tearDown()
+        
         t.tearDownClass()
 
 
@@ -317,7 +388,7 @@ class TestExceptionInTest(_TestCellTests):
             t.setUpClass()
         t.setUp()
 
-        _assert_x_undefined(t)
+        _assert_undefined(t)
 
         # test should error out
         try:
@@ -394,7 +465,7 @@ class TestCellCounting(_TestCellTests):
         There's a skipped test at the start of the notebook to make sure skips don't
         affect test/cell correspondence.
         """
-        self._assert_skipped(self.t.test_code_cell_1, "cell code not injected into test")
+        self._assert_skipped(self.t.test_code_cell_1, "no test supplied")
 
     def test_still_ok_after_markdown(self):
         """Correspondence still ok after markdown cell?"""
@@ -549,7 +620,7 @@ def test_basic_runWithReturn_fail():
 
     try:
         _ = runWithReturn(COVERAGE, rules={'cell_coverage': 100})
-    except Exception:
+    except Exception: # so is this test broken? it doesn't check the exception is what's expected
         pass  # would need to alter run fn or capture output to check more exactly
     else:
         raise ValueError("coverage check should have failed, but didn't")

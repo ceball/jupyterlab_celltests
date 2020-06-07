@@ -57,7 +57,7 @@ import unittest
 import nbformat
 from nbval.kernel import RunningKernel
 
-from nbcelltests.shared import is_empty, cell_injected_into_test, source2lines, lines2source, cell_inj_span, get_test
+from nbcelltests.shared import empty_ast, cell_injected_into_test, source2lines, lines2source, cell_inj_span, get_test, only_whitespace
 
 
 def get_kernel(path_to_notebook):
@@ -134,28 +134,45 @@ def get_celltests(path_to_notebook):
     code_cell = 0
     for i, cell in enumerate(notebook.cells, start=1):
         test_source = lines2source(get_test(cell))
-        empty_test = is_empty(_inject_cell_into_test("pass", test_source))
+        test_ast_empty = empty_ast(_inject_cell_into_test("pass", test_source))
 
         if cell.get('cell_type') != 'code':
-            if not empty_test:
+            if not test_ast_empty:
                 raise ValueError("Cell %d is not a code cell, but metadata contains test code!" % i)
             continue
 
         code_cell += 1
+
         celltest = _inject_cell_into_test(cell['source'], test_source)
 
+        # skipping refers just to presentation of test result for that cell.
+        # a skipped test will still be run as a dependency of later cells.
+
+        # think the skipping is going to be confusing! but so would not generating
+        # a test method! how to handle this silent running?
+        
         # TODO: we are unsure if we want to keep the skipping part!
         # If keeping, clean up and document above.
         skip_reason = None
-        if is_empty(cell['source']):
+        if empty_ast(cell['source']):
+            if not test_ast_empty:
+                raise ValueError("Code cell %d is empty, but test contains code." % code_cell)
+            # empty cell will display as "skipped"
             skip_reason = "empty code cell"
-        elif empty_test:
+        elif test_ast_empty:
+            # empty test will display as "skipped"   
             skip_reason = "no test supplied"
+            if only_whitespace(test_source):
+                # BUT empty test defaults to being %cell for subsequent tests
+                # "backfilling"
+                celltest = cell['source']
         elif not cell_injected_into_test(test_source):
-            skip_reason = "cell code not injected into test"
+            # we should perhaps indicate this in some way, but it should be permitted
+            # skip_reason = "cell code not injected into test"
+            pass
 
         celltests[code_cell] = {'skip_reason': skip_reason,
-                                'source': celltest if not skip_reason else ""}
+                                'source': celltest} # if not skip_reason else ""}
 
     return celltests
 

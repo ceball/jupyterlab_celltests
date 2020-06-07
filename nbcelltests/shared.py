@@ -112,7 +112,7 @@ def extract_extrametadata(notebook, override=None, noqa_regex=None):
     base['noqa'] = set()
 
     for c in notebook.cells:
-        if c['cell_type'] != 'code' or is_empty(c['source']):
+        if c['cell_type'] != 'code' or empty_ast(c['source']):
             continue
 
         base['cell_lines'].append(0)
@@ -124,7 +124,7 @@ def extract_extrametadata(notebook, override=None, noqa_regex=None):
                 noqa_match = noqa_regex.match(line)
                 if noqa_match:
                     base['noqa'].add(noqa_match.group(1))
-            if not is_empty(line):
+            if not empty_ast(line):
                 base['lines'] += 1
                 base['cell_lines'][-1] += 1
         if cell_injected_into_test(get_test(c)):
@@ -142,7 +142,20 @@ def get_test(cell):
     return lines2source(cell.get('metadata', {}).get('tests', []))
 
 
-def is_empty(source):
+def empty_ast(source):
+    """
+    Whether the supplied source string has an empty ast.
+
+    >>> empty_ast(" ")
+    True
+
+    >>> empty_ast("pass")
+    False
+
+    >>> empty_ast("# hello")
+    True
+
+    """
     try:
         parsed = ast.parse(source)
     except SyntaxError:
@@ -154,6 +167,21 @@ def is_empty(source):
 
     # TODO: py2 utf8
     return len(parsed.body) == 0
+
+def only_whitespace(source):
+    """
+    Whether 
+
+    >>> only_whitespace(" ")
+    True
+
+    >>> only_whitespace("pass")
+    False
+
+    >>> only_whitespace("# hello")
+    False
+    """
+    return len(source.strip()) == 0
 
 
 CELL_INJ_TOKEN = r"%cell"
